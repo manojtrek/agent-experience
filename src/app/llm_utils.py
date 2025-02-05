@@ -1,24 +1,42 @@
 import json
+import logging
 import requests
 from config import BASE_URL
 from langchain.llms import Ollama
 
 llm = Ollama(model="llama3.2", base_url="http://localhost:11434")
-  
+
 def create_llm_prompt(user_query, relevant_endpoints):
     prompt_template = f"""
-    You are an API assistant that generates valid API requests based on user queries. 
+    You are an API assistant that generates valid API requests based on user queries.
     Follow these guidelines:
     - Return ONLY a single JSON object with no extra text.
     - The JSON object must contain:
       - "endpoint": a string representing the API endpoint. Use ONLY one of the following endpoints:
-        {relevant_endpoints} (Choose one and only one endpoint).
+        {relevant_endpoints} (Choose one and only one endpoint that best matches the user query).
       - "method": one of ["GET", "POST", "PUT", "DELETE"].
       - "parameters": a dictionary of query/body parameters (can be empty).
       - "description": a short summary of the request.
+    - Ensure that the selected endpoint accurately reflects the user's intention or query.
     - Generate ONLY ONE API request that best matches the user query.
     - DO NOT generate multiple requests or duplicate endpoints.
-    - DO NOT generate the response in array format, should be single endpoint.
+    - DO NOT generate the response in array format; it should be a single endpoint.
+
+    Example of a valid API request:
+    {{
+      "endpoint": "resource",
+      "method": "GET",
+      "parameters": {{}},
+      "description": "Fetches the resource details."
+    }}
+
+    If no relevant endpoint is found, return:
+    {{
+      "endpoint": null,
+      "method": null,
+      "parameters": {{}},
+      "description": "No relevant endpoint found."
+    }}
 
     Now, process the next query and return ONLY the JSON output with no extra text.
 
@@ -27,6 +45,9 @@ def create_llm_prompt(user_query, relevant_endpoints):
     return prompt_template
 
 def generate_api_request(user_query, relevant_endpoints):
+    if not relevant_endpoints:
+        return None
+
     prompt_template = create_llm_prompt(user_query, relevant_endpoints)  # Get the strict JSON prompt
     formatted_prompt = f"{prompt_template}\nUser Query: {user_query}"  # Append user query manually
 
@@ -37,22 +58,13 @@ def generate_api_request(user_query, relevant_endpoints):
         api_request = json.loads(response_json)
         return api_request  # ✅ Successfully parsed API request
     except json.JSONDecodeError as e:
-        print(f"❌ JSON Parsing Error: {e}. Retrying...")
-
-    print("❌ LLM failed to generate a valid API request after multiple attempts.")
-    return None  
-
+        logging.error(f"Failed to parse API request: {e}")
+        return None
 
 def execute_api_request(api_request, api_requester):
-    
-    print(api_request)
-
-    if not api_request or "endpoint" not in api_request or "method" not in api_request:
-        return "Invalid API request format."
-
-    endpoint = api_request["endpoint"]
-    method = api_request["method"]
-    params = api_request.get("parameters", {})
+    method = api_request.get("method", "").upper()
+    endpoint = api_request.get("endpoint", "")
+    params = api_request.get("params", {})
     request_body = api_request.get("request_body", {})
 
     try:
@@ -73,9 +85,13 @@ def execute_api_request(api_request, api_requester):
         return response.json()
 
     except requests.exceptions.RequestException as e:
+        logging.error(f"API request failed: {e}")
         return f"API request failed: {e}"
 
 def generate_natural_language_response(api_response):
+    if not api_response or isinstance(api_response, str):
+        return "No relevant endpoints found or an error occurred."
+
     prompt = f"""
     You are an AI assistant that helps users understand API responses. Your task is to summarize the following API response in natural language:
 
@@ -84,5 +100,9 @@ def generate_natural_language_response(api_response):
 
     Provide a clear and concise summary of the response.
     """
-    response = llm.invoke(prompt)
-    return response
+    try:
+        response = llm.invoke(prompt)
+        return response
+    except Exception as e:
+        logging.error(f"Failed to generate natural language response: {e}")
+        return "Failed to generate a natural language response."

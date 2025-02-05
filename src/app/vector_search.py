@@ -1,13 +1,9 @@
 import os
-import json
-import requests
 import logging
-from langchain.llms import Ollama
-from langchain.embeddings import OllamaEmbeddings
-from langchain.vectorstores import Chroma
-from langchain.tools import Tool
+import requests
 from langchain.docstore.document import Document
 from langchain.embeddings import HuggingFaceEmbeddings
+from langchain.vectorstores import Chroma
 
 # Load the embedding model
 embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
@@ -67,47 +63,3 @@ def create_vector_database(openapi_spec_url):
 
     logging.info("Vectorstore created and populated.")
     return vectorstore
-
-def create_vector_search_tool(vectorstore):
-    def search_function(query: str, score_threshold: float = 0.5) -> str:
-        normalized_query = f"Find API matching: {query}"
-        
-        print(f"\n🔍 Searching for: {normalized_query}")
-
-        # Use `similarity_search_with_score` to check scores
-        docs = vectorstore.similarity_search_with_score(normalized_query, k=5)
-
-        # Filter out documents with a score lower than the threshold
-        filtered_docs = [
-            (doc, score) for doc, score in docs if score >= score_threshold
-        ]
-
-        # Print similarity scores
-        print("\n📌 Retrieved Documents with Scores:")
-        if not filtered_docs:
-            print("No relevant results found.")
-        else:
-            for doc, score in filtered_docs:
-                print(f"- {doc.metadata.get('endpoint_path', '')} [{doc.metadata.get('http_method', '')}]")
-                print(f"  Score: {score:.4f}")
-                print(f"  Summary: {doc.page_content[:100]}...")  # Print first 100 chars
-
-        parsed_results = [
-            {
-                "endpoint": doc.metadata.get("endpoint_path", ""),
-                "method": doc.metadata.get("http_method", ""),
-                "summary": doc.page_content,
-                "tags": doc.metadata.get("tags", ""),
-                "score": score
-            }
-            for doc, score in filtered_docs
-        ]
-
-        return json.dumps(parsed_results, indent=2)
-
-    search_tool = Tool(
-        name="API_Endpoint_Search",
-        func=search_function,
-        description="Useful for searching relevant API endpoints based on the user's query."
-    )
-    return search_tool
